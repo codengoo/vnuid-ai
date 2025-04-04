@@ -1,8 +1,10 @@
-from pathlib import  Path
+from pathlib import Path
 from fastapi import UploadFile, HTTPException
-from typing import  List
+
+from typing import List
 import uuid
 import shutil
+from tasks import app as ceApp
 
 UPLOAD_DIR = "uploads"
 ALLOWED_FILE_TYPES = {"image/jpeg", "image/png"}
@@ -10,6 +12,7 @@ MAX_FILE_SIZE = 2 * 1024 * 1024  # 2MB
 
 root_path = Path(UPLOAD_DIR)
 root_path.mkdir(parents=True, exist_ok=True)
+
 
 async def upload_images(files: List[UploadFile], uid: str):
     saved_files = []
@@ -27,7 +30,8 @@ async def upload_images(files: List[UploadFile], uid: str):
         file.file.seek(0)
 
         if file_size > MAX_FILE_SIZE:
-            raise HTTPException(status_code=400, detail="File size is exceeded")
+            raise HTTPException(
+                status_code=400, detail="File size is exceeded")
 
     #  prepare folder
     user_folder = root_path / uid
@@ -44,6 +48,11 @@ async def upload_images(files: List[UploadFile], uid: str):
         with open(file_location, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        saved_files.append({"filename": file.filename, "saved_path": file_location})
+        saved_files.append(
+            {"filename": file.filename, "saved_path": file_location})
 
-    return {"uploaded_files": saved_files}
+    # Add train task
+    task = ceApp.send_task("tasks.add_task", args=[uid])
+
+    # Return data
+    return {"uploaded_files": saved_files, "task_id": task.id}
