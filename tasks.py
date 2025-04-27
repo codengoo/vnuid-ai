@@ -3,7 +3,6 @@ import cv2
 from insightface.app import FaceAnalysis
 from mtcnn import MTCNN
 import uuid
-import json
 import numpy as np
 import requests
 from celery import Celery
@@ -17,6 +16,7 @@ app = Celery(
 
 # app.conf.worker_pool = 'solo'
 # app.conf.worker_pool = 'prefork'
+# app.conf.worker_pool = 'threads'
 
 def post_result(data):
     url = "http://localhost:8001/api/embedding"
@@ -38,37 +38,7 @@ def augment_face(uid: str):
     return ""
 
 
-def extract_face(uid: str):
-    directory = f"uploads/{uid}"
-    face_directory = f"uploads/{uid}/faces"
-    # Prepare
-    if not os.path.exists(face_directory):
-        os.makedirs(face_directory, exist_ok=True)
-
-    # List files
-    files = os.listdir(directory)
-    files = [file for file in files if os.path.isfile(os.path.join(directory, file))]
-    detector = MTCNN()
-    padding = [50, 50]
-    result = []
-    for file in files:
-        image = cv2.imread(os.path.join(directory, file))
-        faces = detector.detect_faces(image)
-
-        for face in faces:
-            x, y, w, h = face['box']
-            face_image = image[y - padding[1]:y + h + padding[1], x - padding[0]:x + w + padding[0]]
-
-            face_filename = f"{face_directory}/{uuid.uuid4()}.jpg"
-            cv2.imwrite(face_filename, face_image)
-            result.append((x, y, w, h))
-
-    return result
-
-
-def calc_embedding(uid: str):
-    directory = f"uploads/{uid}/faces"
-    # directory = f"uploads/{uid}"
+def calc_embedding(directory: str):
     files = os.listdir(directory)
     files = [file for file in files if os.path.isfile(os.path.join(directory, file))]
 
@@ -82,24 +52,40 @@ def calc_embedding(uid: str):
         faces = arc_face_app.get(img)
 
         if faces and len(faces) > 0:
+            print("Detect face")
             embedding = faces[0].normed_embedding
             embeddings.append(embedding)
         else:
             print("No face detected")
 
-    best_embedding = np.mean(embeddings, axis=0)
-    return best_embedding.tolist()
+    if len(embeddings) > 0:
+        best_embedding = np.mean(embeddings, axis=0)
+        return best_embedding.tolist()
+    raise Exception("No embedding")
 
 
 @app.task
-def add_task(uid):
-    extract_face(uid)
-    emd = calc_embedding(uid)
+def compare_face(uid):
+    emd1 = calc_embedding(f"uploads/{uid}/train")
+    print(emd1)
+
+    emd2 = calc_embedding(f"uploads/{uid}/test")
+    print(emd2)
+
+    simp = np.dot(emd1, emd2)
+    print(simp)
+
+    return post_result(simp)
+
+@app.task
+def update_face(uid):
+    # extract_face(f"uploads/{uid}/train")
+    emd = calc_embedding(f"uploads/{uid}/train")
+    print(emd)
 
     data_string = {
         "embedding": emd,
         "uid": uid
     }
 
-    r = post_result(data_string)
-    return r
+    return post_result(data_string)
